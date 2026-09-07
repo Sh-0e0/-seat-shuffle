@@ -6,6 +6,8 @@
 <title>자리 뽑기</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=Black+Han+Sans&family=Noto+Sans+KR:wght@400;500;700;900&display=swap" rel="stylesheet">
+<script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore-compat.js"></script>
 <style>
   :root{
     --bg-deep:#0b1524;
@@ -39,6 +41,7 @@
   .eyebrow::before{content:"";width:6px;height:6px;border-radius:50%;background:var(--cyan);box-shadow:0 0 8px var(--cyan);}
   h1{font-family:'Black Han Sans', sans-serif;font-size:34px;margin:0;letter-spacing:.02em;text-shadow:0 0 24px rgba(79,157,255,.35);}
   .subtitle{color:var(--text-dim);font-size:13.5px;margin-top:4px;}
+  .storage-badge{font-size:11.5px;color:var(--text-dim);margin-top:6px;}
   .class-tag{background:var(--bg-panel);border:1px solid var(--line);padding:8px 14px;border-radius:999px;font-size:13px;color:var(--text-dim);}
   .class-tag b{color:var(--text-main);}
 
@@ -156,6 +159,7 @@
       <div class="eyebrow">SEAT DRAW</div>
       <h1>자리 뽑기</h1>
       <div class="subtitle">명단을 등록하고, 학급 크기·고정·범위·빈 자리를 설정해보세요</div>
+      <div class="storage-badge" id="storageBadge"></div>
     </div>
     <div class="class-tag">현재 학급 · <b id="classNameTag">3학년 2반</b> · <span id="studentCountTag">24</span>명</div>
   </div>
@@ -394,6 +398,33 @@ document.getElementById("applySizeBtn").addEventListener("click", ()=>{
   showToast(`"${className}" · ${COLS}열 × ${ROWS}행으로 설정했어요`);
 });
 
+// ---- Firebase (shared storage) setup ----
+// Fill these in with your own project's values from the Firebase console
+// (Project settings → your web app → SDK setup and configuration).
+// Until this is filled in, saving still works but only on this device.
+const firebaseConfig = {
+  apiKey: "AIzaSyDfcqwxO_Ymn5LXae8pvAKBeN1tOtzemdM",
+  authDomain: "seat-shuffle-b8812.firebaseapp.com",
+  projectId: "seat-shuffle-b8812",
+  storageBucket: "seat-shuffle-b8812.firebasestorage.app",
+  messagingSenderId: "1030146453168",
+  appId: "1:1030146453168:web:8cc4d9bdf5115cf774d575"
+};
+
+let db = null;
+let usingSharedStorage = false;
+try{
+  if(firebaseConfig.apiKey && firebaseConfig.apiKey !== "YOUR_API_KEY" && typeof firebase !== "undefined"){
+    firebase.initializeApp(firebaseConfig);
+    db = firebase.firestore();
+    usingSharedStorage = true;
+  }
+}catch(err){
+  console.error("Firebase 초기화 실패:", err);
+  db = null;
+  usingSharedStorage = false;
+}
+
 // storage keys can't contain whitespace/slashes/quotes, but class names can —
 // so route every save/load through this sanitizer instead of using the raw name
 function storageKeyFor(name){
@@ -401,13 +432,18 @@ function storageKeyFor(name){
 }
 
 // window.storage only exists inside Claude's own preview sandbox.
-// Once this file is hosted on a real website, that API doesn't exist at all,
-// so every save/load call throws — which is exactly the bug reported here.
-// Fall back to the browser's built-in localStorage whenever window.storage
-// isn't available, so saving works both inside Claude and on a real site.
+// Firebase (when configured) is checked first since it's the only option
+// that's actually shared across everyone visiting the link.
 const hasClaudeStorage = (typeof window !== "undefined") && !!window.storage;
 
 async function storageSet(key, value){
+  if(usingSharedStorage && db){
+    await db.collection("seatShuffle").doc(key).set({
+      value,
+      updatedAt: firebase.firestore.FieldValue.serverTimestamp()
+    });
+    return { key, value, shared:true };
+  }
   if(hasClaudeStorage){
     return await window.storage.set(key, value, false);
   }
@@ -416,11 +452,21 @@ async function storageSet(key, value){
 }
 
 async function storageGet(key){
+  if(usingSharedStorage && db){
+    const docSnap = await db.collection("seatShuffle").doc(key).get();
+    return docSnap.exists ? { key, value: docSnap.data().value, shared:true } : null;
+  }
   if(hasClaudeStorage){
     return await window.storage.get(key, false);
   }
   const v = localStorage.getItem(key);
   return v !== null ? { key, value:v, shared:false } : null;
+}
+
+function storageModeLabel(){
+  if(usingSharedStorage) return "☁️ 링크로 들어온 모두와 공유되는 저장소에 연결됐어요";
+  if(hasClaudeStorage) return "🅲 Claude 미리보기 저장소 (실제 배포 후엔 자동 전환돼요)";
+  return "⚠️ 아직 이 브라우저에만 저장돼요 — firebaseConfig를 채우면 모두와 공유돼요";
 }
 
 // ---- 저장 / 불러오기 ----
@@ -705,6 +751,7 @@ async function drawSeats(){
 document.getElementById("drawBtn").addEventListener("click", drawSeats);
 
 buildGrid();
+document.getElementById("storageBadge").textContent = storageModeLabel();
 </script>
 </body>
 </html>
