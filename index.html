@@ -191,6 +191,17 @@
     </div>
 
     <div class="panel">
+      <h3>📝 자리 직접 입력</h3>
+      <div class="desc">이미 정해진 자리를 그대로 반영해요. "좌석번호, 이름" 한 줄에 하나씩 (예: A1, 김도윤)</div>
+      <div class="form-row">
+        <textarea id="manualInput" placeholder="A1, 김도윤&#10;B1, 이서윤&#10;C1, 박하은"></textarea>
+      </div>
+      <div class="form-row" style="margin-bottom:0;">
+        <button class="btn-add ghost" id="manualApplyBtn" style="flex:none;">반영</button>
+      </div>
+    </div>
+
+    <div class="panel">
       <h3>🔒 자리 고정</h3>
       <div class="desc">이름, 좌석 번호를 입력하면 뽑기에서 제외돼요 (예: 김도윤, A1)</div>
       <div class="form-row">
@@ -371,6 +382,39 @@ function showToast(msg){
   clearTimeout(showToast._t);
   showToast._t = setTimeout(()=>toast.classList.remove("show"), 2200);
 }
+
+// ---- 자리 직접 입력 ----
+document.getElementById("manualApplyBtn").addEventListener("click", ()=>{
+  const raw = document.getElementById("manualInput").value;
+  const lines = raw.split("\n").map(l=>l.trim()).filter(Boolean);
+  if(lines.length === 0){ showToast(`"좌석번호, 이름" 형식으로 입력해주세요`); return; }
+
+  const parsed = [];
+  for(const line of lines){
+    const parts = line.split(/[,:]/).map(s=>s.trim()).filter(Boolean);
+    if(parts.length < 2){ showToast(`"${line}" 형식이 올바르지 않아요 (예: A1, 김도윤)`); return; }
+    const seat = parts[0].toUpperCase();
+    const name = parts[1];
+    const seatEl = document.querySelector(`.seat[data-id="${seat}"]`);
+    if(!seatEl){ showToast(`"${seat}"은(는) 유효한 좌석 번호가 아니에요`); return; }
+    if(!students.includes(name)){ showToast(`"${name}" 학생을 명단에서 찾을 수 없어요`); return; }
+    if(fixed[seat] && fixed[seat] !== name){ showToast(`"${seat}"은(는) 이미 고정된 자리예요. 먼저 고정을 해제해주세요`); return; }
+    parsed.push([seat, name]);
+  }
+
+  // Each name can only sit in one seat — if it's currently placed elsewhere
+  // in the preview, clear that old spot before placing it at the new one.
+  parsed.forEach(([seat, name])=>{
+    const oldSeat = Object.keys(seatAssignment).find(s => seatAssignment[s] === name && s !== seat);
+    if(oldSeat) seatAssignment[oldSeat] = null;
+    seatAssignment[seat] = name;
+    emptySeats.delete(seat);
+  });
+
+  document.getElementById("manualInput").value = "";
+  renderChipLists(); renderSeats();
+  showToast(`${parsed.length}개 자리를 입력한 대로 반영했어요`);
+});
 
 // ---- 명단 등록 ----
 document.getElementById("rosterAddBtn").addEventListener("click", ()=>{
