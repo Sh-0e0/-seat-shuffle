@@ -380,7 +380,7 @@ function showToast(msg){
   toast.textContent = msg;
   toast.classList.add("show");
   clearTimeout(showToast._t);
-  showToast._t = setTimeout(()=>toast.classList.remove("show"), 2200);
+  showToast._t = setTimeout(()=>toast.classList.remove("show"), 3800);
 }
 
 // ---- 자리 직접 입력 ----
@@ -525,7 +525,8 @@ document.getElementById("saveBtn").addEventListener("click", async ()=>{
       showToast("저장에 실패했어요. 다시 시도해주세요");
     }
   }catch(err){
-    showToast("저장 중 오류가 발생했어요");
+    console.error("저장 오류:", err);
+    showToast(`저장 오류: ${(err && err.message) ? err.message : err}`);
   }
 });
 
@@ -548,7 +549,8 @@ document.getElementById("loadBtn").addEventListener("click", async ()=>{
     renderSeats();
     showToast(`"${className}" 저장된 배치를 불러왔어요`);
   }catch(err){
-    showToast(`"${className}"으로 저장된 배치를 찾을 수 없어요`);
+    console.error("불러오기 오류:", err);
+    showToast(`불러오기 오류: ${(err && err.message) ? err.message : err}`);
   }
 });
 
