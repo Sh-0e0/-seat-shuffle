@@ -253,7 +253,7 @@
     <div class="grid" id="grid"></div>
   </div>
 
-  <div class="foot-note">고정 자리가 최우선이며, 범위 지정 학생은 1행의 남은 자리 중 무작위로 배정돼요. 빈 자리로 지정한 곳은 뽑기에서 제외돼요.</div>
+  <div class="foot-note">고정 자리가 최우선이며, 범위 지정 학생은 1행의 남은 자리 중 무작위로 배정돼요. 빈 자리로 지정한 곳은 뽑기에서 제외돼요. 가로로 붙은 두 자리(A-B, C-D, E-F)는 한 짝으로 보고, 직전 배치에서 짝이었던 사람과는 다시 짝이 되지 않고, 직전과 같은 자리에도 연속으로 앉지 않게 뽑아요.</div>
 </div>
 
 <div class="toast" id="toast"></div>
@@ -713,6 +713,92 @@ function playShuffleIntro(){
   });
 }
 
+// ---- 직전 짝 / 직전 자리 연속 방지 (가로로 붙은 두 자리 = 한 짝) ----
+// Seats pair up horizontally: A-B, C-D, E-F ... (an odd last column has no partner)
+function partnerSeatId(id, cols){
+  const col = id.charCodeAt(0) - 65;
+  const rowPart = id.slice(1);
+  const pcol = (col % 2 === 0) ? col + 1 : col - 1;
+  if(pcol < 0 || pcol >= cols) return null;
+  return String.fromCharCode(65 + pcol) + rowPart;
+}
+
+// name -> the name of whoever sat next to them in the arrangement passed in
+function buildPrevPartners(arrangement, cols){
+  const prev = {};
+  Object.keys(arrangement).forEach(id => {
+    const n = arrangement[id];
+    const p = partnerSeatId(id, cols);
+    if(n && p && arrangement[p]) prev[n] = arrangement[p];
+  });
+  return prev;
+}
+
+// name -> the seat they sat in last time
+function buildPrevSeats(arrangement){
+  const m = {};
+  Object.keys(arrangement).forEach(id => { if(arrangement[id]) m[arrangement[id]] = id; });
+  return m;
+}
+
+// Does the pair containing seat `id` repeat a previous pairing?
+function pairRepeats(layout, id, prevPartners, cols){
+  const p = partnerSeatId(id, cols);
+  if(!p) return false;
+  const a = layout[id], b = layout[p];
+  return !!(a && b && prevPartners[a] === b);
+}
+
+// Is the student at `id` in the exact same seat as last time? (Fixed seats are
+// the user's own choice, so only seats that took part in the draw are checked.)
+function sameSeatRepeats(layout, id, prevSeats, movable){
+  const n = layout[id];
+  return !!(n && movable.has(id) && prevSeats[n] === id);
+}
+
+// Repeatedly swaps a student who repeats a pair or a seat with someone in another
+// seat, only keeping swaps that leave both seats clean and don't push a
+// range-restricted student out of row 1. Returns what couldn't be avoided.
+function avoidRepeats(layout, movableIds, prevPartners, prevSeats, rangeNames, cols, shuffle){
+  const movable = new Set(movableIds);
+  const isRow1 = id => id.slice(1) === "1";
+  const canSit = (name, id) => !name || !rangeNames.has(name) || isRow1(id);
+  const isBad = id => pairRepeats(layout, id, prevPartners, cols) || sameSeatRepeats(layout, id, prevSeats, movable);
+
+  for(let pass = 0; pass < 400; pass++){
+    const conflicts = Object.keys(layout).filter(isBad);
+    if(conflicts.length === 0) break;
+
+    let progressed = false;
+    for(const id of shuffle(conflicts)){
+      if(!isBad(id)) continue; // already fixed by an earlier swap
+      const movers = [];
+      if(sameSeatRepeats(layout, id, prevSeats, movable)) movers.push(id);
+      if(pairRepeats(layout, id, prevPartners, cols)){
+        [id, partnerSeatId(id, cols)].forEach(s => { if(s && movable.has(s) && !movers.includes(s)) movers.push(s); });
+      }
+      let done = false;
+      for(const x of shuffle(movers)){
+        for(const y of shuffle([...movable])){
+          if(y === x) continue;
+          if(!canSit(layout[x], y) || !canSit(layout[y], x)) continue;
+          [layout[x], layout[y]] = [layout[y], layout[x]];
+          if(!isBad(x) && !isBad(y)){ done = true; break; }
+          [layout[x], layout[y]] = [layout[y], layout[x]]; // undo
+        }
+        if(done) break;
+      }
+      if(done) progressed = true;
+    }
+    if(!progressed) break;
+  }
+  return {
+    pairs: Object.keys(layout).filter(id => pairRepeats(layout, id, prevPartners, cols)).length / 2,
+    seats: Object.keys(layout).filter(id => sameSeatRepeats(layout, id, prevSeats, movable)).length
+  };
+}
+
+
 async function drawSeats(){
   const drawBtn = document.getElementById("drawBtn");
   drawBtn.disabled = true;
@@ -746,6 +832,24 @@ async function drawSeats(){
   const assignment = new Map();
   shuffledRange.forEach((name,i)=> assignment.set(rowFrontShuffled[i], name));
   remainingEligible.forEach((el,i)=> assignment.set(el, remainingNames[i] || null));
+
+  // Repeat avoidance: the arrangement on screen right now (last draw, a loaded save,
+  // or manually entered seats) counts as "last time" — same partner or same seat again
+  // gets swapped away.
+  const prevPartners = buildPrevPartners(seatAssignment, COLS);
+  const prevSeats = buildPrevSeats(seatAssignment);
+  const layout = { ...seatAssignment };
+  assignment.forEach((name, el) => { layout[el.dataset.id] = name; });
+  const unresolved = avoidRepeats(
+    layout,
+    eligibleEls.map(el => el.dataset.id),
+    prevPartners,
+    prevSeats,
+    new Set(rangeNames),
+    COLS,
+    shuffleArr
+  );
+  assignment.forEach((_, el) => { assignment.set(el, layout[el.dataset.id]); });
 
   assignment.forEach((name, el) => { seatAssignment[el.dataset.id] = name; });
 
@@ -789,7 +893,12 @@ async function drawSeats(){
   const totalTime = orderedSeats.length * STAGGER_MS + MIN_ROLL_MS + ROLL_JITTER_MS + 380 + 400;
   setTimeout(()=>{
     confettiBurst();
-    showToast("자리 배정이 끝났어요 · 저장하면 이 배치가 유지돼요");
+    const leftovers = [];
+    if(unresolved.pairs > 0) leftovers.push(`직전 짝과 다시 만난 짝 ${unresolved.pairs}쌍`);
+    if(unresolved.seats > 0) leftovers.push(`직전과 같은 자리 ${unresolved.seats}명`);
+    showToast(leftovers.length
+      ? `자리 배정이 끝났어요 · 고정/범위 조건 때문에 ${leftovers.join(", ")}이(가) 남았어요`
+      : "자리 배정이 끝났어요 · 저장하면 이 배치가 유지돼요");
     drawBtn.disabled = false;
   }, totalTime);
 }
